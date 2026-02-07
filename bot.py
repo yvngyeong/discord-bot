@@ -11,9 +11,21 @@ load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
-INFRA_ROLE_ID = int(os.getenv("INFRA_ROLE_ID"))
 
-TEAM_TAG = "[Infra]"
+INFRA_ROLE_ID = int(os.getenv("INFRA_ROLE_ID"))
+SERVICE_ROLE_ID = int(os.getenv("SERVICE_ROLE_ID"))
+
+# 팀 설정
+TEAMS = {
+    "infra": {
+        "tag": "[Infra]",
+        "role_id": INFRA_ROLE_ID,
+    },
+    "service": {
+        "tag": "[Service]",
+        "role_id": SERVICE_ROLE_ID,
+    }
+}
 
 # =====================
 # 디스코드 클라이언트
@@ -22,7 +34,7 @@ intents = discord.Intents.default()
 client = discord.Client(intents=intents)
 
 # =====================
-# 스케줄러 (KST 기준)
+# 스케줄러 (KST)
 # =====================
 scheduler = AsyncIOScheduler(timezone="Asia/Seoul")
 
@@ -30,7 +42,7 @@ scheduler = AsyncIOScheduler(timezone="Asia/Seoul")
 # =====================
 # 오늘 일일회고 스레드 생성
 # =====================
-async def create_daily_retrospective():
+async def create_daily_retrospectives():
     channel = client.get_channel(CHANNEL_ID)
     if channel is None:
         print("❌ Channel not found")
@@ -38,59 +50,60 @@ async def create_daily_retrospective():
 
     today_display = datetime.now().strftime("%Y / %m / %d")
 
-    # 1️⃣ 기준 메시지 (공지 + 역할 멘션)
-    base_message = await channel.send(
-        f"<@&{INFRA_ROLE_ID}> 금일 일일회고 스레드입니다",
-        allowed_mentions=discord.AllowedMentions(roles=True)
-    )
+    for team in TEAMS.values():
+        base_message = await channel.send(
+            f"<@&{team['role_id']}> 금일 일일회고 스레드입니다",
+            allowed_mentions=discord.AllowedMentions(roles=True)
+        )
 
-    # 2️⃣ 스레드 생성 (첫 메시지 없음)
-    await base_message.create_thread(
-        name=f"{TEAM_TAG} 일일회고 - {today_display}",
-        auto_archive_duration=1440  # 24시간
-    )
+        await base_message.create_thread(
+            name=f"{team['tag']} 일일회고 - {today_display}",
+            auto_archive_duration=1440
+        )
 
-    print(f"✅ Daily retrospective thread created: {today_display}")
+        print(f"✅ {team['tag']} thread created: {today_display}")
 
 
 # =====================
-# 어제 일일회고 스레드 닫기 (아카이브)
+# 어제 일일회고 스레드 닫기
 # =====================
-async def close_yesterday_retrospective():
+async def close_yesterday_retrospectives():
     channel = client.get_channel(CHANNEL_ID)
     if channel is None:
         print("❌ Channel not found")
         return
 
     yesterday_display = (datetime.now() - timedelta(days=1)).strftime("%Y / %m / %d")
-    target_thread_name = f"{TEAM_TAG} 일일회고 - {yesterday_display}"
+    target_names = {
+        f"{team['tag']} 일일회고 - {yesterday_display}"
+        for team in TEAMS.values()
+    }
 
-    async for message in channel.history(limit=50):
+    async for message in channel.history(limit=100):
         if message.author == client.user and message.thread:
-            if message.thread.name == target_thread_name:
+            if message.thread.name in target_names:
                 await message.thread.edit(archived=True)
-                print(f"🧵 Retrospective archived: {yesterday_display}")
-                break
+                print(f"🧵 Archived: {message.thread.name}")
 
 
 # =====================
-# 봇 준비 완료 이벤트
+# 봇 준비 완료
 # =====================
 @client.event
 async def on_ready():
     print(f"🤖 Logged in as {client.user}")
 
-    # 매일 17:59 → 어제 스레드 닫기
+    # 17:59 → 전날 스레드 닫기
     scheduler.add_job(
-        close_yesterday_retrospective,
+        close_yesterday_retrospectives,
         trigger="cron",
         hour=17,
         minute=59
     )
 
-    # 매일 18:00 → 오늘 스레드 생성
+    # 18:00 → 오늘 스레드 생성
     scheduler.add_job(
-        create_daily_retrospective,
+        create_daily_retrospectives,
         trigger="cron",
         hour=18,
         minute=0
@@ -103,4 +116,3 @@ async def on_ready():
 # 봇 실행
 # =====================
 client.run(TOKEN)
-
